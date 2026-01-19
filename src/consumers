@@ -1,0 +1,184 @@
+"""
+Simplified Event Detector Consumer
+Replaces PyFlink Job 1 - runs locally with Kafka consumer/producer
+Detects new events by clustering news articles
+"""
+
+import json
+import logging
+import time
+from datetime import datetime
+from collections import defaultdict
+from kafka import KafkaConsumer, KafkaProducer
+from kafka.errors import KafkaError
+import hashlib
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Configuration
+KAFKA_BOOTSTRAP_SERVERS = 'localhost:9092'
+TOPIC_RAW_NEWS = 'raw_news'
+TOPIC_DETECTED_EVENTS = 'detected_events'
+CONSUMER_GROUP = 'event-detector-group'
+
+# In-memory event clustering (simplified without ML embeddings)
+event_clusters = defaultdict(list)  # keyword_hash -> [articles]
+event_centroids = {}  # event_id -> keywords
+
+def extract_keywords(text, max_keywords=10):
+    """Extract simple keywords from text (lowercase, common words)"""
+    if not text:
+        return []
+    
+    # Simple keyword extraction: split, lowercase, filter short words
+    words = text.lower().split()
+    keywords = [w for w in words if len(w) > 4 and w.isalpha()]
+    return list(set(keywords[:max_keywords]))
+
+def calculate_keyword_hash(keywords):
+    """Create a hash from keywords for clustering"""
+    sorted_kw = sorted(keywords[:5])  # Use top 5 keywords
+    return hashlib.md5(''.join(sorted_kw).encode()).hexdigest()[:8]
+
+def detect_event(article_data):
+    """
+    Simplified event detection:
+    - Extract keywords from title + description
+    - Group articles with similar keywords
+    - If cluster reaches threshold (3+ articles), emit as event
+    """
+    try:
+        title = article_data.get('title', '')
+        description = article_data.get('description', '')
+        content = article_data.get('content', '')
+        
+        # Extract keywords
+        text = f"{title} {description} {content}"
+        keywords = extract_keywords(text)
+        
+        if len(keywords) < 2:
+            return None  # Not enough information
+        
+        # Get cluster hash
+        cluster_key = calculate_keyword_hash(keywords)
+        
+        # Add to cluster
+        event_clusters[cluster_key].append(article_data)
+        
+        # Check if cluster reaches threshold
+        cluster_size = len(event_clusters[cluster_key])
+        
+        if cluster_size == 3:  # New event detected (3 articles mentioning similar keywords)
+            event_id = f"event_{cluster_key}_{int(time.time())}"
+            
+            # Create event
+            event = {
+                'event_id': event_id,
+                'keywords': keywords[:10],
+                'first_seen': article_data.get('published_at', datetime.now().isoformat()),
+                'article_count': cluster_size,
+                'cluster_key': cluster_key,
+                'initial_articles': [
+                    {
+                        'title': a.get('title'),
+                        'source': a.get('source', {}).get('name'),
+                        'url': a.get('url')
+                    } for a in event_clusters[cluster_key][:3]
+                ],
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            logger.info(f"🎯 New event detected: {event_id} | Keywords: {keywords[:5]} | Articles: {cluster_size}")
+            return event
+        
+        elif cluster_size > 3:  # Update existing event
+            event_id = next((eid for eid, kw in event_centroids.items() 
+                           if kw == keywords[:5]), None)
+            
+            if not event_id:
+                event_id = f"event_{cluster_key}_{int(time.time())}"
+                event_centroids[event_id] = keywords[:5]
+            
+            event = {
+                'event_id': event_id,
+                'keywords': keywords[:10],
+                'first_seen': event_clusters[cluster_key][0].get('published_at'),
+                'article_count': cluster_size,
+                'cluster_key': cluster_key,
+                'timestamp': datetime.now().isoformat(),
+                'event_update': True
+            }
+            
+            return event
+        
+        return None  # Not yet an event
+        
+    except Exception as e:
+        logger.error(f"Error detecting event: {e}")
+        return None
+
+def main():
+    """Main consumer loop"""
+    
+    # Create consumer
+    consumer = KafkaConsumer(
+        TOPIC_RAW_NEWS,
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        group_id=CONSUMER_GROUP,
+        auto_offset_reset='earliest',
+        enable_auto_commit=True,
+        value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+    )
+    
+    # Create producer
+    producer = KafkaProducer(
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        value_serializer=lambda v: json.dumps(v).encode('utf-8')
+    )
+    
+    logger.info(f"🚀 Event Detector Consumer started")
+    logger.info(f"📖 Consuming from: {TOPIC_RAW_NEWS}")
+    logger.info(f"📝 Producing to: {TOPIC_DETECTED_EVENTS}")
+    
+    events_detected = 0
+    articles_processed = 0
+    
+    try:
+        for message in consumer:
+            articles_processed += 1
+            article = message.value
+            
+            # Detect event
+            event = detect_event(article)
+            
+            if event:
+                # Send to detected_events topic
+                producer.send(TOPIC_DETECTED_EVENTS, value=event)
+                events_detected += 1
+                
+                logger.info(f"✅ Event #{events_detected} sent: {event['event_id']} | "
+                          f"Articles processed: {articles_processed}")
+            
+            # Log progress every 50 articles
+            if articles_processed % 50 == 0:
+                logger.info(f"📊 Progress: {articles_processed} articles processed, "
+                          f"{events_detected} events detected")
+    
+    except KeyboardInterrupt:
+        logger.info("🛑 Shutting down...")
+    
+    except Exception as e:
+        logger.error(f"❌ Error in consumer: {e}")
+    
+    finally:
+        consumer.close()
+        producer.close()
+        logger.info(f"📈 Final Stats: {articles_processed} articles, {events_detected} events detected")
+
+if __name__ == '__main__':
+    main()
