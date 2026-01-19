@@ -1506,7 +1506,6 @@ Created as a comprehensive demonstration of:
 
 For questions, issues, or feature requests:
 - Open an issue on GitHub
-- Email: [your.email@example.com]
 - Documentation: See this README
 
 ---
