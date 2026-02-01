@@ -412,15 +412,14 @@ CLUSTERS = [
 ]
 
 LOCATIONS = [
-    # Indian cities (majority)
+    # Indian cities
     "Mumbai", "Delhi", "Bengaluru", "Hyderabad", "Chennai", "Kolkata",
     "Pune", "Ahmedabad", "Jaipur", "Lucknow", "Chandigarh", "Kochi",
     "Indore", "Nagpur", "Gurgaon", "Noida", "Vizag", "Bhubaneswar",
-    # International
-    "Singapore", "Dubai", "London", "New York", "Tokyo", "San Francisco",
+    "Bhopal", "Patna", "Vadodara", "Ludhiana", "Agra", "Nashik",
 ]
 
-SOURCES = ["The Times of India", "Economic Times", "Business Standard", "Mint", "Indian Express", "Reuters India", "Bloomberg Quint", "CNBC TV18"]
+SOURCES = ["The Times of India", "Economic Times", "Business Standard", "Mint", "Indian Express", "The Hindu", "Deccan Herald", "Hindustan Times"]
 AUTHORS = ["Priya Sharma", "Rajesh Kumar", "Anita Desai", "Vikram Singh", "Meera Patel", "Arjun Mehta", "Neha Gupta", "Sanjay Reddy"]
 
 # Title variations to ensure uniqueness

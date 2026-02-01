@@ -1,3 +1,4 @@
+
 import json
 import random
 import time
@@ -5,7 +6,7 @@ import argparse
 import warnings
 from datetime import datetime, timedelta
 import numpy as np
-from elasticsearch import Elasticsearch, helpers
+# from elasticsearch import Elasticsearch, helpers # Removed
 # Import ML libraries for enrichment
 from sentence_transformers import SentenceTransformer
 import spacy
@@ -26,8 +27,8 @@ warnings.filterwarnings("ignore")
 fake = Faker('en_IN')
 
 # Configuration
-ES_URL = 'http://localhost:9200'
-ES_INDEX = 'news_articles_batch'  # Separate index for batch app
+# ES_URL = 'http://localhost:9200'
+# ES_INDEX = 'news_articles_batch'  # Separate index for batch app
 
 # Taxonomy
 CITIES = ['Mumbai', 'Delhi', 'Bengaluru', 'Hyderabad', 'Chennai', 'Kolkata', 'Pune', 'Ahmedabad']
@@ -47,19 +48,6 @@ CLICKBAIT_PATTERNS = [
     "Exclusive: The dark side of {}!"
 ]
 
-def get_es_client():
-    # For ES 8.x with security disabled
-    from elasticsearch import Elasticsearch
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    
-    return Elasticsearch(
-        hosts=[{'host': 'localhost', 'port': 9200, 'scheme': 'http'}],
-        verify_certs=False,
-        ssl_show_warn=False,
-        request_timeout=30
-    )
-
 def load_models():
     print("⏳ Loading ML Models (this may take a moment)...")
     # Load SBERT
@@ -69,7 +57,7 @@ def load_models():
         nlp = spacy.load('en_core_web_sm')
     except:
         print("⚠️ Warning: en_core_web_sm not found. Downloading...")
-        from list_dir import run_command
+        # from list_dir import run_command
         # This part is tricky inside a script, usually we expect it pre-installed.
         # Fallback provided in logic if nlp fails or we just assume it exists.
         nlp = None 
@@ -157,53 +145,17 @@ def enrich_article(doc, embedder, nlp):
     return doc
 
 def main():
-    parser = argparse.ArgumentParser(description='Batch Generator for Narrative Engine')
+    parser = argparse.ArgumentParser(description='Batch Generator for Narrative Engine (JSON Only)')
     parser.add_argument('--count', type=int, default=1000, help='Number of articles to generate')
     args = parser.parse_args()
 
     print(f"🚀 Starting Batch Generation of {args.count} articles...")
     
-    # 1. Connect to ES and Reset Index
-    es = get_es_client()
-    
-    # Try to delete if exists (use try/except for ES 8.x compatibility)
-    try:
-        es.indices.delete(index=ES_INDEX)
-        print(f"🧹 Deleted existing index: {ES_INDEX}")
-    except Exception:
-        print(f"📝 Index {ES_INDEX} doesn't exist yet (will create new)")
-    
-    # Define mapping with dense_vector
-    mapping = {
-        "mappings": {
-            "properties": {
-                "published_at": {"type": "date"},
-                "timestamp": {"type": "date"},
-                "ingested_at": {"type": "date"},
-                "embedding_vector": {
-                     "type": "dense_vector",
-                     "dims": 384,
-                     "index": False
-                 },
-                "sentiment_score": {"type": "float"},
-                "sensationalism_score": {"type": "float"},
-                "factual_density": {"type": "float"},
-                "entities": {"type": "keyword"},
-                "locations": {"type": "keyword"},
-                "category": {"type": "keyword"}
-            }
-        }
-    }
-    
-    es.indices.create(index=ES_INDEX, body=mapping)
-    print(f"✅ Created new index: {ES_INDEX}")
-
     # 2. Load Models
     embedder, nlp = load_models()
 
     # 3. Generate and Index
     batch_size = 50
-    batch_buffer = []
     all_docs = []
     total_generated = 0
 
@@ -216,7 +168,7 @@ def main():
     types = [False] * n_factual + [True] * n_clickbait
     random.shuffle(types)
 
-    print("📢 Generating, Enriching, and Indexing...")
+    print("📢 Generating and Enriching...")
     
     for i, is_clickbait in enumerate(types):
         # Generate base
@@ -225,34 +177,11 @@ def main():
         # Enrich
         doc = enrich_article(doc, embedder, nlp)
         
-        # Add to batch
-        action = {
-            "_index": ES_INDEX,
-            "_id": doc['id'],
-            "_source": doc
-        }
-        batch_buffer.append(action)
         all_docs.append(doc)
-
-        if len(batch_buffer) >= batch_size:
-            try:
-                helpers.bulk(es, batch_buffer)
-            except Exception:
-                pass # Ignore ES errors
-            total_generated += len(batch_buffer)
-            print(f"   Indexed {total_generated}/{args.count}...", end='\r')
-            batch_buffer = []
-
-    # Final flush
-    if batch_buffer:
-        try:
-            helpers.bulk(es, batch_buffer)
-        except Exception:
-            pass # Ignore ES errors
-        # Add remaining to all_docs
-        for action in batch_buffer:
-            all_docs.append(action['_source'])
-        total_generated += len(batch_buffer)
+        total_generated += 1
+        
+        if total_generated % batch_size == 0:
+            print(f"   Generated {total_generated}/{args.count}...", end='\r')
 
     # Save to JSON
     output_file = 'batch_analytics/synthetic_data.json'
@@ -261,7 +190,6 @@ def main():
     
     print(f"\n✅ COMPLETE! Generated {total_generated} articles in {time.time() - start_time:.2f}s.")
     print(f"📁 Data saved to: {output_file}")
-    print(f"📁 Data (attempted) index: '{ES_INDEX}'")
 
 if __name__ == "__main__":
     main()

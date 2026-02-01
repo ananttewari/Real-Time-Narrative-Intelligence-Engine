@@ -94,9 +94,9 @@ consumer = Consumer({
 
     'bootstrap.servers': KAFKA_BROKER,
 
-    'group.id': 'elasticsearch-indexer',
+    'group.id': 'narrative-demo-consumer',
 
-    'auto.offset.reset': 'latest',
+    'auto.offset.reset': 'earliest',
 
     'enable.auto.commit': True
 
@@ -271,12 +271,12 @@ def analyze_sentiment(text):
 
 
         clean_word = word.strip('.,!?;:')
+
         
 
         # Check if previous word is a negation
 
         is_negated = (i > 0 and words[i-1].strip('.,!?;:') in negations)
-
 
 
 
@@ -347,11 +347,7 @@ def contains_inappropriate_content(text):
 
     blocked_keywords = [
 
-        'porn', 'pornhub', 'xxx', 'adult', 'nsfw', 'sex', 
-
-        'nude', 'naked', 'explicit', 'erotic', 'hentai',
-
-        'onlyfans', 'camgirl', 'escort', 'hookup'
+        'porn', 'pornhub', 'xxx', 'hentai', 'camgirl'
 
     ]
 

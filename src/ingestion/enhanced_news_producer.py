@@ -38,29 +38,28 @@ logger = logging.getLogger(__name__)
 class EnhancedNewsProducer:
     """Fetches news from multiple RSS feeds and APIs"""
     
-    # RSS Feeds (no API limits, rich geographic content)
+    # Indian RSS Feeds
     RSS_FEEDS = {
         'world': [
-            'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',
-            'https://feeds.bbci.co.uk/news/world/rss.xml',
-            'https://www.theguardian.com/world/rss',
-            'https://www.aljazeera.com/xml/rss/all.xml',
-            'https://feeds.reuters.com/reuters/topNews',
+            'https://timesofindia.indiatimes.com/rssfeedstopstories.cms',  # TOI Top Stories
+            'https://feeds.feedburner.com/ndtvnews-top-stories',           # NDTV Top Stories
+            'https://www.thehindu.com/news/national/feeder/default.rss',   # The Hindu National
+            'https://www.indiatoday.in/rss/1206584',                       # India Today Top Stories
         ],
         'technology': [
-            'https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml',
-            'https://feeds.bbci.co.uk/news/technology/rss.xml',
-            'https://www.theguardian.com/technology/rss',
+            'https://timesofindia.indiatimes.com/rssfeeds/4719148.cms',    # TOI Tech
+            'https://www.gadgets360.com/rss/feeds',                        # Gadgets 360
+            'https://www.livemint.com/rss/technology',                     # LiveMint Tech
         ],
         'business': [
-            'https://rss.nytimes.com/services/xml/rss/nyt/Business.xml',
-            'https://feeds.bbci.co.uk/news/business/rss.xml',
-            'https://www.theguardian.com/business/rss',
-            'https://www.cnbc.com/id/100003114/device/rss/rss.html',
+            'https://timesofindia.indiatimes.com/rssfeeds/1898055.cms',    # TOI Business
+            'https://economictimes.indiatimes.com/rssfeedstopstories.cms', # Economic Times
+            'https://www.moneycontrol.com/rss/latestnews.xml',             # MoneyControl
         ],
         'general': [
-            'http://feeds.abcnews.com/abcnews/topstories',
-            'https://feeds.bbci.co.uk/news/rss.xml',
+            'https://timesofindia.indiatimes.com/rssfeedstopstories.cms',
+            'https://www.news18.com/rss/india.xml',
+            'https://zeenews.india.com/rss/india-national-news.xml',
         ]
     }
     
@@ -122,7 +121,7 @@ class EnhancedNewsProducer:
         return articles
     
     def fetch_from_newsapi(self, category: str) -> list:
-        """Fetch from NewsAPI"""
+        """Fetch from NewsAPI - Restricted to India"""
         if NEWS_API_KEY == 'YOUR_NEWSAPI_KEY_HERE':
             return []
         
@@ -131,7 +130,7 @@ class EnhancedNewsProducer:
             params = {
                 'apiKey': NEWS_API_KEY,
                 'category': category,
-                'language': 'en',
+                'country': 'in', # Enforce India
                 'pageSize': 30
             }
             
@@ -146,48 +145,7 @@ class EnhancedNewsProducer:
         return []
     
     def fetch_from_guardian(self, category: str) -> list:
-        """Fetch from Guardian API"""
-        if GUARDIAN_API_KEY in ['YOUR_GUARDIAN_KEY_HERE', None]:
-            return []
-        
-        try:
-            section_map = {
-                'general': 'world',
-                'technology': 'technology',
-                'business': 'business',
-                'world': 'world'
-            }
-            
-            url = 'https://content.guardianapis.com/search'
-            params = {
-                'api-key': GUARDIAN_API_KEY,
-                'section': section_map.get(category, 'world'),
-                'page-size': 20,
-                'show-fields': 'headline,bodyText,shortUrl'
-            }
-            
-            response = requests.get(url, params=params, timeout=10)
-            if response.status_code == 200:
-                results = response.json().get('response', {}).get('results', [])
-                
-                articles = []
-                for item in results:
-                    articles.append({
-                        'source': {'id': 'guardian', 'name': 'The Guardian'},
-                        'author': 'The Guardian',
-                        'title': item.get('webTitle', ''),
-                        'description': item.get('fields', {}).get('headline', '')[:500],
-                        'url': item.get('webUrl', ''),
-                        'urlToImage': None,
-                        'publishedAt': item.get('webPublicationDate', ''),
-                        'content': item.get('fields', {}).get('bodyText', '')[:1000]
-                    })
-                
-                logger.info(f"  ✅ Guardian: {len(articles)} articles")
-                return articles
-        except Exception as e:
-            logger.warning(f"  ⚠️ Guardian error: {e}")
-        
+        """Fetch from Guardian API - DISABLED (Foreign Source)"""
         return []
     
     def fetch_news(self, category: str = 'general') -> list:
@@ -199,11 +157,11 @@ class EnhancedNewsProducer:
         # RSS feeds (primary source - no limits)
         all_articles.extend(self.fetch_from_rss(category))
         
-        # NewsAPI (supplementary)
-        all_articles.extend(self.fetch_from_newsapi(category))
+        # NewsAPI (disabled to ensure only Indian sources)
+        # all_articles.extend(self.fetch_from_newsapi(category))
         
-        # Guardian (supplementary)
-        all_articles.extend(self.fetch_from_guardian(category))
+        # Guardian (disabled to ensure only Indian sources)
+        # all_articles.extend(self.fetch_from_guardian(category))
         
         logger.info(f"📊 Total: {len(all_articles)} articles")
         return all_articles

@@ -81,17 +81,14 @@ class NewsProducer:
         """
         all_articles = []
         
-        # Fetch from NewsAPI
+        # Fetch from NewsAPI (Strictly Indian)
+        # Note: Other APIs disabled to enforce "Only Indian Sources" policy
         all_articles.extend(self._fetch_newsapi(category))
         
-        # Fetch from Guardian API
-        all_articles.extend(self._fetch_guardian(category))
-        
-        # Fetch from GNews API
-        all_articles.extend(self._fetch_gnews(category))
-        
-        # Fetch from Currents API
-        all_articles.extend(self._fetch_currents(category))
+        # Guardian, GNews, Currents disabled
+        # all_articles.extend(self._fetch_guardian(category))
+        # all_articles.extend(self._fetch_gnews(category))
+        # all_articles.extend(self._fetch_currents(category))
         
         logger.info(f"📰 Total fetched: {len(all_articles)} articles from all sources ({category})")
         return all_articles
@@ -105,7 +102,7 @@ class NewsProducer:
             params = {
                 'apiKey': NEWS_API_KEY,
                 'category': category,
-                'language': 'en',
+                'country': 'in', # Enforce India
                 'pageSize': 50,
                 'sortBy': 'publishedAt'
             }
@@ -122,139 +119,33 @@ class NewsProducer:
             return []
     
     def _fetch_guardian(self, category: str) -> list:
-        """Fetch from The Guardian API"""
-        if GUARDIAN_API_KEY == 'YOUR_GUARDIAN_KEY_HERE':
-            return []
+        """Fetch from The Guardian API - DISABLED"""
+        return []
         
-        try:
-            # Map our categories to Guardian sections
-            section_map = {
-                'general': 'world',
-                'technology': 'technology',
-                'business': 'business',
-                'science': 'science',
-                'health': 'society'
-            }
-            
-            params = {
-                'api-key': GUARDIAN_API_KEY,
-                'section': section_map.get(category, 'world'),
-                'page-size': 50,
-                'show-fields': 'headline,bodyText,shortUrl',
-                'order-by': 'newest'
-            }
-            
-            response = requests.get(GUARDIAN_API_ENDPOINT, params=params, timeout=10)
-            response.raise_for_status()
-            
-            results = response.json().get('response', {}).get('results', [])
-            
-            # Convert to our format
-            articles = []
-            for item in results:
-                articles.append({
-                    'source': {'id': 'guardian', 'name': 'The Guardian'},
-                    'title': item.get('webTitle', ''),
-                    'description': item.get('fields', {}).get('headline', ''),
-                    'content': item.get('fields', {}).get('bodyText', '')[:500],
-                    'url': item.get('webUrl', ''),
-                    'publishedAt': item.get('webPublicationDate', ''),
-                    'author': 'The Guardian'
-                })
-            
-            logger.info(f"  ✅ Guardian: {len(articles)} articles")
-            return articles
-            
-        except Exception as e:
-            logger.warning(f"  ⚠️ Guardian error: {e}")
-            return []
-    
     def _fetch_gnews(self, category: str) -> list:
-        """Fetch from GNews API"""
-        if GNEWS_API_KEY == 'YOUR_GNEWS_KEY_HERE':
-            return []
-        
-        try:
-            params = {
-                'apikey': GNEWS_API_KEY,
-                'category': category,
-                'lang': 'en',
-                'max': 50
-            }
-            
-            response = requests.get(GNEWS_API_ENDPOINT, params=params, timeout=10)
-            response.raise_for_status()
-            
-            articles = response.json().get('articles', [])
-            logger.info(f"  ✅ GNews: {len(articles)} articles")
-            return articles
-            
-        except Exception as e:
-            logger.warning(f"  ⚠️ GNews error: {e}")
-            return []
+        """Fetch from GNews API - DISABLED"""
+        return []
     
     def _fetch_currents(self, category: str) -> list:
-        """Fetch from Currents API"""
-        if CURRENTS_API_KEY == 'YOUR_CURRENTS_KEY_HERE':
-            return []
-        
-        try:
-            # Currents uses different category names
-            category_map = {
-                'general': 'world',
-                'technology': 'technology',
-                'business': 'business',
-                'science': 'science',
-                'health': 'health'
-            }
-            
-            params = {
-                'apiKey': CURRENTS_API_KEY,
-                'category': category_map.get(category, 'world'),
-                'language': 'en'
-            }
-            
-            response = requests.get(CURRENTS_API_ENDPOINT, params=params, timeout=10)
-            response.raise_for_status()
-            
-            results = response.json().get('news', [])
-            
-            # Convert to our format
-            articles = []
-            for item in results:
-                articles.append({
-                    'source': {'id': 'currents', 'name': 'Currents'},
-                    'title': item.get('title', ''),
-                    'description': item.get('description', ''),
-                    'content': item.get('description', ''),
-                    'url': item.get('url', ''),
-                    'publishedAt': item.get('published', ''),
-                    'author': item.get('author', 'Currents')
-                })
-            
-            logger.info(f"  ✅ Currents: {len(articles)} articles")
-            return articles
-            
-        except Exception as e:
-            logger.warning(f"  ⚠️ Currents error: {e}")
-            return []
+        """Fetch from Currents API - DISABLED"""
+        return []
     
     def _generate_mock_news(self, category: str) -> list:
         """Generate mock news articles for testing"""
         mock_articles = [
             {
-                "source": {"id": "bbc-news", "name": "BBC News"},
-                "title": f"Breaking: Major {category} development in global markets",
+                "source": {"id": "ndtv", "name": "NDTV"},
+                "title": f"Breaking: Major {category} development in Indian markets",
                 "description": f"Experts analyze the impact of recent {category} events on economy",
-                "url": f"https://example.com/news/{category}/{int(time.time())}",
+                "url": f"https://ndtv.com/news/{category}/{int(time.time())}",
                 "publishedAt": datetime.now().isoformat(),
                 "content": f"This is a mock article about {category} for testing purposes."
             },
             {
-                "source": {"id": "cnn", "name": "CNN"},
-                "title": f"Scientists discover breakthrough in {category} research",
-                "description": f"New findings could revolutionize {category} industry",
-                "url": f"https://example.com/news/{category}/{int(time.time()) + 1}",
+                "source": {"id": "the-times-of-india", "name": "The Times of India"},
+                "title": f"Bengaluru scientists discover breakthrough in {category}",
+                "description": f"New findings from IISc could revolutionize {category} industry",
+                "url": f"https://timesofindia.indiatimes.com/news/{category}/{int(time.time()) + 1}",
                 "publishedAt": datetime.now().isoformat(),
                 "content": f"Researchers announce significant progress in {category} field."
             }

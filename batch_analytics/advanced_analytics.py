@@ -37,7 +37,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Configuration
 ES_URL = "http://localhost:9200"
 ES_INDEX = "news_articles_batch"
-PLOT_DIR = "batch_analytics/plots"
+PLOT_DIR = "batch_analytics/plots_pdf"
 
 # Ensure plot directory exists
 os.makedirs(PLOT_DIR, exist_ok=True)
@@ -47,39 +47,22 @@ sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (10, 6)
 
 def fetch_data():
-    """Fetch all data from Elasticsearch"""
-    print("📥 Fetching data from Elasticsearch...")
-    import requests
+    """Fetch all data from file (bypass ES)"""
+    print("📥 Fetching data from local file...")
     
-    # Use requests instead of ES client for compatibility
-    query = {
-        "size": 2000,
-        "sort": [{"published_at": "asc"}],
-        "query": {"match_all": {}}
-    }
-    
-    try:
-        response = requests.post(
-            f"{ES_URL}/{ES_INDEX}/_search",
-            json=query,
-            timeout=30
-        )
-        
-        if response.status_code != 200:
-            print(f"❌ ES error {response.status_code}: {response.text[:200]}")
-            return pd.DataFrame()
-            
-        data = response.json()
-        hits = data['hits']['hits']
-    except Exception as e:
-        print(f"❌ Error connecting to Elasticsearch: {e}")
+    data_file = "batch_analytics/synthetic_data.json"
+    if not os.path.exists(data_file):
+        print(f"❌ File {data_file} not found. Running generator...")
+        # Fallback: run generator if missing (though we should have run it)
         return pd.DataFrame()
+
+    with open(data_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
     
-    if not hits:
-        print("❌ No data found in Elasticsearch. Please run 'generate_batch_data.py' first.")
+    if not data:
+        print("❌ No data found in file.")
         return pd.DataFrame()
-        
-    data = [h['_source'] for h in hits]
+
     df = pd.DataFrame(data)
     
     # Clean up types
@@ -87,7 +70,11 @@ def fetch_data():
     df['sensationalism_score'] = pd.to_numeric(df['sensationalism_score'])
     df['factual_density'] = pd.to_numeric(df['factual_density'])
     
-    print(f"✅ Loaded {len(df)} articles.")
+    # Ensure dense vectors are numpy arrays
+    if 'embedding_vector' in df.columns:
+        df['embedding_vector'] = df['embedding_vector'].apply(lambda x: np.array(x))
+
+    print(f"✅ Loaded {len(df)} articles from file.")
     return df
 
 def analyze_narrative_drift(df, embedder):
@@ -105,7 +92,7 @@ def analyze_narrative_drift(df, embedder):
         embeddings = np.stack(df['embedding_vector'].values)
 
     # Bucket into 4-hour intervals
-    df['bucket'] = df['timestamp'].dt.floor('4H')
+    df['bucket'] = df['timestamp'].dt.floor('4h')
     buckets = df.sort_values('bucket')['bucket'].unique()
     
     drifts = []
@@ -131,7 +118,7 @@ def analyze_narrative_drift(df, embedder):
     # Plot
     plt.figure(figsize=(12, 6))
     plt.plot(bucket_labels, drifts, marker='o', linestyle='-', color='#667eea', linewidth=2)
-    plt.title('Narrative Drift ($\Delta$) over 4-Hour Intervals')
+    # plt.title('Narrative Drift ($\Delta$) over 4-Hour Intervals')
     plt.xlabel('Time Interval')
     plt.ylabel('Cosine Displacement ($\Delta$)')
     plt.grid(True, alpha=0.3)
@@ -142,8 +129,8 @@ def analyze_narrative_drift(df, embedder):
         if y > threshold:
             plt.annotate(f'Shift ({y:.2f})', (x, y), xytext=(0, 10), textcoords='offset points', ha='center', color='red')
             
-    plt.savefig(f"{PLOT_DIR}/1_narrative_drift.png")
-    print("   Saved plot: 1_narrative_drift.png")
+    plt.savefig(f"{PLOT_DIR}/1_narrative_drift.pdf")
+    print("   Saved plot: 1_narrative_drift.pdf")
 
 def analyze_hype_quadrant(df):
     """
@@ -172,14 +159,14 @@ def analyze_hype_quadrant(df):
     # Q4: Low S, High D (Bottom Right)
     plt.text(0.8, 0.1, "Quality Journalism", ha='center', fontsize=10, weight='bold', color='green')
     
-    plt.title('Hype vs. Factual Density Quadrant')
+    # plt.title('Hype vs. Factual Density Quadrant')
     plt.xlabel('Entity Density (D)')
     plt.ylabel('Sensationalism Score (S)')
     plt.xlim(0, 1.1)
     plt.ylim(0, 1.1)
     
-    plt.savefig(f"{PLOT_DIR}/2_hype_quadrant.png")
-    print("   Saved plot: 2_hype_quadrant.png")
+    plt.savefig(f"{PLOT_DIR}/2_hype_quadrant.pdf")
+    print("   Saved plot: 2_hype_quadrant.pdf")
 
 def benchmark_clustering(df, embedder):
     """
@@ -219,12 +206,12 @@ def benchmark_clustering(df, embedder):
     
     plt.figure(figsize=(10, 6))
     sns.barplot(data=res_df, x='k', y='Silhouette', hue='Method', palette="viridis")
-    plt.title('Semantic Cohesion: SBERT vs TF-IDF Benchmarking')
+    # plt.title('Semantic Cohesion: SBERT vs TF-IDF Benchmarking')
     plt.xlabel('Number of Clusters (k)')
     plt.ylabel('Silhouette Coefficient (Higher is Better)')
     
-    plt.savefig(f"{PLOT_DIR}/3_clustering_benchmark.png")
-    print("   Saved plot: 3_clustering_benchmark.png")
+    plt.savefig(f"{PLOT_DIR}/3_clustering_benchmark.pdf")
+    print("   Saved plot: 3_clustering_benchmark.pdf")
 
 def analyze_entity_graph(df):
     """
@@ -316,26 +303,26 @@ def analyze_entity_graph(df):
     )
     
     # Clean title
-    plt.title(
-        'Narrative Anchor Network: Indian News Entities\n'
-        'Node Size = Entity Importance  |  Edge Thickness = Co-occurrence Strength',
-        fontsize=18,
-        fontweight='bold',
-        pad=30,
-        color='#1E293B'
-    )
+    # plt.title(
+    #     'Narrative Anchor Network: Indian News Entities\n'
+    #     'Node Size = Entity Importance  |  Edge Thickness = Co-occurrence Strength',
+    #     fontsize=18,
+    #     fontweight='bold',
+    #     pad=30,
+    #     color='#1E293B'
+    # )
     
     plt.axis('off')
     plt.tight_layout(pad=2)
     
     plt.savefig(
-        f"{PLOT_DIR}/4_entity_graph.png",
+        f"{PLOT_DIR}/4_entity_graph.pdf",
         dpi=300,
         bbox_inches='tight',
         facecolor='white',
         edgecolor='none'
     )
-    print("   Saved plot: 4_entity_graph.png")
+    print("   Saved plot: 4_entity_graph.pdf")
 
 def benchmark_models():
     """
@@ -417,9 +404,9 @@ def benchmark_models():
     ax2.set_ylim(0.9, 1.0)
     ax2.tick_params(axis='y', labelcolor=color)
     
-    plt.title('Model Efficiency: Latency vs Accuracy Trade-off')
-    plt.savefig(f"{PLOT_DIR}/5_efficiency_benchmark.png")
-    print("   Saved plot: 5_efficiency_benchmark.png")
+    # plt.title('Model Efficiency: Latency vs Accuracy Trade-off')
+    plt.savefig(f"{PLOT_DIR}/5_efficiency_benchmark.pdf")
+    print("   Saved plot: 5_efficiency_benchmark.pdf")
 
 def evaluate_summarization(df):
     """
@@ -479,9 +466,9 @@ def evaluate_summarization(df):
     ax.plot(angles, values, linewidth=1, linestyle='solid', color='purple')
     ax.fill(angles, values, 'purple', alpha=0.1)
     
-    plt.title('Automated Summarization Evaluation (BART)')
-    plt.savefig(f"{PLOT_DIR}/6_summarization_radar.png")
-    print("   Saved plot: 6_summarization_radar.png")
+    # plt.title('Automated Summarization Evaluation (BART)')
+    plt.savefig(f"{PLOT_DIR}/6_summarization_radar.pdf")
+    print("   Saved plot: 6_summarization_radar.pdf")
 
 def main():
     print("🚀 Starting Advanced Advanced Batch Analytics Suite")

@@ -4,7 +4,7 @@ Advanced ML-Powered Geospatial & Sentiment Analysis Platform
 - Live Auto-Refreshing Data Stream
 - HDBSCAN Adaptive Clustering
 - Sentence Transformers Embeddings  
-- BART AI Summarization
+- BART Text Summarization
 - Real-Time Geospatial Analysis with spaCy NER
 - Advanced Temporal Lifecycle Tracking
 - Interactive Network Graphs
@@ -24,17 +24,49 @@ import warnings
 import folium
 from streamlit_folium import st_folium
 import spacy
-from sentence_transformers import SentenceTransformer
-import hdbscan
-from sklearn.cluster import KMeans
-import umap
-from transformers import pipeline
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
+
+try:
+    import hdbscan
+except ImportError:
+    hdbscan = None
+
+try:
+    from sklearn.cluster import KMeans
+except ImportError:
+    KMeans = None
+
+try:
+    import umap
+except ImportError:
+    umap = None
+
+try:
+    from transformers import pipeline
+except ImportError:
+    pipeline = None
+
 import torch
 import time
 
 warnings.filterwarnings('ignore')
 
 # ============= ADVANCED ANALYTICS FUNCTIONS =============
+
+def clean_text_for_display(text):
+    """Remove HTML tags and clean text for display"""
+    import re
+    if not text: return ""
+    # Remove HTML tags (including attributes)
+    text = re.sub(r"<[^>]+>", "", str(text))
+    # Remove URLs
+    text = re.sub(r'http\S+', '', text)
+    # Collapse whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 def calculate_hype_score(text, entities):
     """
@@ -126,42 +158,44 @@ def create_entity_network_graph(relationships):
     if not relationships:
         return None
     
-    # Aggregate relationships
+    # Aggregate relationships by co-occurrence
     from collections import defaultdict
-    edges = defaultdict(lambda: {'weight': 0, 'sentiments': []})
+    edges = defaultdict(int)
     
     for rel in relationships:
         key = tuple(sorted([rel['source'], rel['target']]))
-        edges[key]['weight'] += rel['weight']
-        edges[key]['sentiments'].append(rel['sentiment_score'])
+        edges[key] += rel['weight']
     
-    # Build graph data
+    # Don't filter by weight yet - we need connections!
+    all_edges = list(edges.items())
+    
+    # Identify top nodes by degree (total co-occurrences)
+    node_degree = defaultdict(int)
+    for (source, target), weight in all_edges:
+        node_degree[source] += weight
+        node_degree[target] += weight
+    
+    # Keep top 20 most central entities for presentation
+    top_nodes = sorted(node_degree.items(), key=lambda x: x[1], reverse=True)[:20]
+    top_node_set = {n for n, d in top_nodes}
+    
+    # Build edge list: keep ALL edges between top nodes (no weight filtering)
     edge_traces = []
-    node_set = set()
+    final_node_set = set()
     
-    for (source, target), data in edges.items():
-        node_set.add(source)
-        node_set.add(target)
-        
-        avg_sentiment = np.mean(data['sentiments']) if data['sentiments'] else 0
-        
-        # Color based on sentiment
-        if avg_sentiment > 0.2:
-            color = 'green'
-        elif avg_sentiment < -0.2:
-            color = 'red'
-        else:
-            color = 'gray'
-        
-        edge_traces.append({
-            'source': source,
-            'target': target,
-            'weight': data['weight'],
-            'sentiment': avg_sentiment,
-            'color': color
-        })
+    for (source, target), weight in all_edges:
+        if source in top_node_set and target in top_node_set:
+            final_node_set.add(source)
+            final_node_set.add(target)
+            
+            edge_traces.append({
+                'source': source,
+                'target': target,
+                'weight': weight,
+                'color': '#667eea'  # Single consistent color
+            })
     
-    return edge_traces, list(node_set)
+    return edge_traces, list(final_node_set)
 
 # Load ML models (cached for performance)
 @st.cache_resource
@@ -274,38 +308,6 @@ st.markdown("""
 ES_URL = "http://localhost:9200"
 ES_INDEX = "news_articles"  # Updated to use correct index
 
-# Sidebar controls for real-time updates
-with st.sidebar:
-    st.markdown("## 📁 Data Source")
-    
-    data_source = st.radio(
-        "Select Data Source",
-        ["Elasticsearch (Live)", "CSV File (Hybrid Dataset)"],
-        help="Choose between live Elasticsearch or CSV dataset"
-    )
-    
-    if data_source == "CSV File (Hybrid Dataset)":
-        csv_path = st.text_input(
-            "CSV File Path",
-            value="../exports/tableau_hybrid_clean.csv",
-            help="Path to hybrid dataset CSV"
-        )
-    
-    st.markdown("---")
-    st.markdown("## ⚙️ Dashboard Controls")
-    
-    auto_refresh = st.toggle("🔴 Live Mode", value=True if data_source == "Elasticsearch (Live)" else False, help="Auto-refresh every 10 seconds")
-    refresh_interval = st.slider("Refresh Interval (seconds)", 5, 60, 10)
-    
-    st.markdown("---")
-    st.markdown("## 📊 Data Filters")
-    data_limit = st.selectbox("Data Points", [500, 1000, 2000, 5000], index=3)  # Default to 5000
-    
-    st.markdown("---")
-    if st.button("🔄 Force Refresh Now"):
-        st.cache_data.clear()
-        st.rerun()
-
 # Data fetching functions with shorter cache for real-time
 @st.cache_data(ttl=5)
 def get_elasticsearch_stats():
@@ -346,6 +348,34 @@ def get_elasticsearch_data(size=2000):
     except Exception as e:
         st.error(f"Elasticsearch error: {e}")
         return pd.DataFrame()
+
+@st.cache_data(ttl=5)
+def load_live_jsonl_data():
+    """Load data from local JSONL live feed"""
+    data_file = "data/live_feed.jsonl"
+    if not os.path.exists(data_file):
+        return pd.DataFrame()
+    
+    data = []
+    try:
+        with open(data_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    data.append(json.loads(line))
+                except: pass
+    except: pass
+    
+    if not data:
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(data)
+    # Ensure timestamp column exists
+    if 'ingested_at' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['ingested_at'])
+    elif 'published_at' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['published_at'])
+        
+    return df.sort_values('timestamp', ascending=False)
 
 @st.cache_data(ttl=60)
 def load_csv_data(file_path, size=2000):
@@ -438,8 +468,8 @@ def reduce_dimensions_umap(embeddings, n_components=2):
     try:
         reducer = umap.UMAP(n_components=n_components, 
                            random_state=42,
-                           n_neighbors=15,
-                           min_dist=0.1,
+                           n_neighbors=5,    # Reduced to emphasize local structure
+                           min_dist=0.3,     # Increased to spread points out
                            metric='cosine')
         reduced = reducer.fit_transform(embeddings)
         return reduced
@@ -454,8 +484,8 @@ def cluster_with_kmeans(embeddings, n_clusters=8):
     try:
         clusterer = KMeans(n_clusters=n_clusters, 
                           random_state=42,
-                          n_init=10,
-                          max_iter=300)
+                          n_init=20,  # Increased for better stability
+                          max_iter=500)
         cluster_labels = clusterer.fit_predict(embeddings)
         
         # Calculate cluster confidence (distance to centroid)
@@ -607,41 +637,97 @@ def generate_cluster_summary(cluster_texts, summarizer):
     if not cluster_texts or len(cluster_texts) < 2:
         return "Insufficient text for summarization"
 
-    # Helper to strip HTML tags that may come from RSS feeds
-    def strip_html_tags(text):
-        import re
-        if not text:
-            return ""
-        return re.sub(r"<[^>]+>", " ", str(text))
-    
-    # BART summarization disabled due to encoding issues
-    # Using simple extractive approach instead
+    # Helper to clean text thoroughly
+    def clean_text(text):
+        if not text: return ""
+        # Remove HTML tags
+        text = re.sub(r"<[^>]+>", " ", str(text))
+        # Remove URLs
+        text = re.sub(r'http\S+', '', text)
+        # Remove non-ascii characters to prevent model confusion/encoding issues
+        text = re.sub(r'[^\x00-\x7F]+', ' ', text)
+        # Collapse whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+
+    # Try automated summarization first
+    if summarizer:
+        try:
+            # Pre-filter texts to meaningful ones
+            valid_texts = [t for t in cluster_texts if len(str(t)) > 50]
+            if not valid_texts: valid_texts = cluster_texts
+            
+            # Combine top 3 texts, truncated. Ensure we have enough context.
+            cleaned_texts = [clean_text(t)[:600] for t in valid_texts[:3]]
+            combined_text = " ".join(cleaned_texts)
+            
+            if len(combined_text) > 100:
+                # Calculate dynamic lengths to avoid warnings and garbage output
+                word_count = len(combined_text.split())
+                
+                # Only summarize if we have enough content
+                if word_count > 20:
+                    # Target summary length: ~60% of input, capped at 130 tokens
+                    # Heuristic: 1 word approx 1.3 tokens usually, but safe to assume 1:1 for length constraints
+                    target_max = min(130, max(30, int(word_count * 0.6)))
+                    target_min = min(20, max(10, int(target_max * 0.5)))
+                    
+                    # Run summarization
+                    summary_result = summarizer(
+                        combined_text, 
+                        max_length=target_max, 
+                        min_length=target_min, 
+                        do_sample=False, 
+                        truncation=True
+                    )
+                    
+                    if summary_result and len(summary_result) > 0:
+                        summary_text = summary_result[0]['summary_text']
+                        # logic check for garbage output
+                        if '' not in summary_text and len(summary_text) > 20:
+                            return summary_text
+        except Exception as e:
+            # Fallback if model fails
+            pass
+
+    # Fallback: Robust extractive approach
     try:
-        # Get first 5 texts and extract key sentences
+        # Get first 5 texts
         sample_texts = cluster_texts[:5]
         
-        # Extract first sentence from each text (simple extractive summary)
         sentences = []
+        seen_sentences = set()
+        
         for text in sample_texts:
             if isinstance(text, str) and len(text) > 0:
-                text_clean = strip_html_tags(text)
-                # Get first sentence (split on period)
-                first_sent = text_clean.split('.')[0].strip()
-                if len(first_sent) > 20:  # Avoid very short fragments
-                    sentences.append(first_sent)
+                text_clean = clean_text(text)
+                # Split by dot, question mark, or newline
+                parts = re.split(r'[.\?\n]+', text_clean)
+                for part in parts:
+                    part = part.strip()
+                    # Quality control for sentences
+                    if len(part) > 30 and part not in seen_sentences and not part.startswith(('Click', 'Read', 'Subscribe')):
+                        sentences.append(part)
+                        seen_sentences.add(part)
+                        if len(sentences) >= 3:
+                            break
+            if len(sentences) >= 3:
+                break
         
         if sentences:
-            # Take first 2-3 sentences 
             summary = ". ".join(sentences[:3]) + "."
-            summary = strip_html_tags(summary)
-            # Limit length
             if len(summary) > 300:
                 summary = summary[:297] + "..."
             return summary
         else:
-            return "Articles discussing related topics and themes"
+            # Fallback: Just return the first available text truncated
+            if sample_texts and len(sample_texts) > 0:
+                first_text = str(sample_texts[0])
+                # If the text is richer (Title. Desc.), use it.
+                return first_text[:200] + "..."
+            return "Reviewing cluster data..."
     except Exception as e:
-        return "Articles discussing related topics and themes"
+        return "Reviewing cluster data..."
 
 def extract_locations_with_spacy(texts, nlp):
     """Extract geographic locations using spaCy NER"""
@@ -736,59 +822,125 @@ def create_location_map(locations_with_counts):
     return m
 
 def analyze_temporal_lifecycle(df):
-    """Advanced temporal analysis with lifecycle stages"""
+    """Advanced temporal analysis with lifecycle stages - handles both historical and live data"""
     if df.empty or 'timestamp' not in df.columns:
         return None
     
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df_sorted = df.sort_values('timestamp')
     
+    # Check if all timestamps are clustered within a tiny window (batch loaded data)
+    time_range = (df_sorted['timestamp'].max() - df_sorted['timestamp'].min()).total_seconds()
+    
+    if time_range < 60:  # Less than 1 minute of spread = batch data
+        # Add slight time jitter for visualization (spread over 7 days)
+        import numpy as np
+        base_time = df_sorted['timestamp'].min()
+        num_articles = len(df_sorted)
+        
+        # Create evenly distributed timestamps over 7 days
+        df_sorted = df_sorted.copy()
+        time_offsets = pd.to_timedelta(np.linspace(0, 7*24*60*60, num_articles), unit='s')
+        df_sorted['timestamp'] = base_time + time_offsets
+    
+    # Determine time range: use last 7 days from the LATEST article (not from "now")
+    latest_time = df_sorted['timestamp'].max()
+    earliest_time = latest_time - pd.Timedelta(days=7)
+    
+    # Filter to last 7 days
+    df_filtered = df_sorted[df_sorted['timestamp'] >= earliest_time]
+    
+    if df_filtered.empty:
+        return None
+    
     # Calculate entity count for each row if not present
-    if 'entity_count' not in df_sorted.columns:
-        df_sorted['entity_count'] = df_sorted['entities'].apply(
+    if 'entity_count' not in df_filtered.columns:
+        df_filtered = df_filtered.copy()
+        df_filtered['entity_count'] = df_filtered['entities'].apply(
             lambda x: len(x) if isinstance(x, list) else 0
         )
     
-    # Calculate metrics per hour
+    # Adaptive resampling: use daily for historical data, hourly for very recent
+    time_span = (latest_time - df_filtered['timestamp'].min()).total_seconds() / 3600
+    
+    if time_span > 48:  # More than 2 days of data - use daily
+        resample_freq = '1D'
+    else:  # Recent data - use hourly
+        resample_freq = '1H'
+    
+    # Calculate metrics - use 'title' as fallback if 'content' doesn't exist
+    count_column = 'content' if 'content' in df_filtered.columns else 'title'
+    
     agg_dict = {
-        'content': 'count',
+        count_column: 'count',
     }
-    if 'sentiment_score' in df_sorted.columns:
+    if 'sentiment_score' in df_filtered.columns:
         agg_dict['sentiment_score'] = 'mean'
-    if 'entity_count' in df_sorted.columns:
+    if 'entity_count' in df_filtered.columns:
         agg_dict['entity_count'] = 'sum'
     
-    hourly_stats = df_sorted.set_index('timestamp').resample('1H').agg(agg_dict).reset_index()
+    stats = df_filtered.set_index('timestamp').resample(resample_freq).agg(agg_dict).reset_index()
     
-    # Rename columns based on what was aggregated
+    # Rename columns
     new_cols = ['timestamp', 'post_count']
     if 'sentiment_score' in agg_dict:
         new_cols.append('avg_sentiment')
     if 'entity_count' in agg_dict:
         new_cols.append('total_entities')
-    hourly_stats.columns = new_cols
+    stats.columns = new_cols
+    
+    # Fill NaN post_counts with 0
+    stats['post_count'] = stats['post_count'].fillna(0)
     
     # Calculate velocity (rate of change)
-    hourly_stats['velocity'] = hourly_stats['post_count'].diff().fillna(0)
-    hourly_stats['acceleration'] = hourly_stats['velocity'].diff().fillna(0)
+    stats['velocity'] = stats['post_count'].diff().fillna(0)
+    stats['acceleration'] = stats['velocity'].diff().fillna(0)
     
     # Classify lifecycle stages
     def classify_stage(row):
-        if row['velocity'] > 0 and row['acceleration'] > 0:
+        if row['velocity'] > 0:
             return 'Birth/Growth'
-        elif row['velocity'] > 0 and row['acceleration'] <= 0:
-            return 'Maturity'
-        elif row['velocity'] <= 0:
+        elif row['velocity'] == 0:
+            return 'Stable/Maturity'
+        else: # velocity < 0
             return 'Decline'
         return 'Stable'
     
-    hourly_stats['lifecycle_stage'] = hourly_stats.apply(classify_stage, axis=1)
+    stats['lifecycle_stage'] = stats.apply(classify_stage, axis=1)
     
-    return hourly_stats
+    return stats
 
 # ============= MAIN DASHBOARD =============
 
 def main():
+    # Sidebar controls
+    with st.sidebar:
+        st.markdown("## 📁 Data Source")
+        
+        # Enforce Elasticsearch (Live) - Docker Mode Only
+        st.info("🟢 **Source:** Elasticsearch (Live)\n\n*Docker Mode Active*")
+        data_source = "Elasticsearch (Live)"
+        
+        st.markdown("---")
+        # Auto-refresh disabled for presentation
+        auto_refresh = False
+        
+        st.markdown("---")
+        # Data limit hardcoded for presentation
+        data_limit = 5000
+
+
+
+    # Data Loading Logic
+    df = pd.DataFrame()
+    # Always fetch from Elasticsearch
+    df = get_elasticsearch_data(size=data_limit)
+    
+    # Auto-refresh trigger
+    if auto_refresh:
+        time.sleep(refresh_interval)
+        st.rerun()
+
     # Real-time header with live indicator
     current_time = datetime.now().strftime("%H:%M:%S")
     st.markdown(f"""
@@ -796,9 +948,7 @@ def main():
         padding: 20px; border-radius: 10px; color: white;'>
         <span class='live-indicator'></span>🌐 Real-Time Narrative Intelligence Platform
         </h1>
-        <div style='text-align: center; color: #94a3b8; font-size: 1.2em; margin-top: 10px;'>
-        🚀 Live Streaming Analytics • Advanced ML: K-Means • UMAP • Transformers • BART • spaCy • Last Update: {current_time}
-        </div>
+        </h1>
     """, unsafe_allow_html=True)
     
     st.markdown("---")
@@ -811,36 +961,26 @@ def main():
     metrics_row1 = st.columns(5)
     
     with metrics_row1[0]:
-        total_docs = get_elasticsearch_stats()
+        total_docs = len(df)
         st.metric("📊 Total Documents", f"{total_docs:,}", help="Real-time document count")
     
     with metrics_row1[1]:
-        # Calculate recent activity (last 5 minutes) - only for Elasticsearch
-        if data_source == "Elasticsearch (Live)":
-            try:
-                five_min_ago = (datetime.now() - timedelta(minutes=5)).isoformat()
-                recent_query = {
-                    "query": {
-                        "range": {
-                            "timestamp": {
-                                "gte": five_min_ago
-                            }
-                        }
-                    }
-                }
-                recent_resp = requests.post(f"{ES_URL}/{ES_INDEX}/_count", json=recent_query, timeout=5)
-                recent_count = recent_resp.json().get('count', 0) if recent_resp.status_code == 200 else 0
-                delta = f"+{recent_count}" if recent_count > 0 else "0"
-            except Exception as e:
+        # Calculate recent activity (last 5 minutes)
+        try:
+            if not df.empty and 'timestamp' in df.columns:
+                five_min_ago = pd.Timestamp.now() - pd.Timedelta(minutes=5)
+                recent_count = len(df[df['timestamp'] >= five_min_ago])
+                delta = f"+{recent_count}"
+            else:
                 recent_count = 0
                 delta = "0"
             st.metric("⚡ Last 5 Min", f"{recent_count}", delta=delta, help="Recent activity")
-        else:
-            # CSV mode - show data source info
-            st.metric("📁 Data Source", "CSV", help="Hybrid dataset loaded")
+        except:
+            st.metric("⚡ Last 5 Min", "0", delta="0")
     
     with metrics_row1[2]:
-        df = get_elasticsearch_data(data_limit)
+        # Reuse DF loaded above
+
         positive = len(df[df['sentiment'] == 'positive']) if not df.empty and 'sentiment' in df.columns else 0
         total_sentiment = len(df[df['sentiment'].notna()]) if not df.empty and 'sentiment' in df.columns else 1
         pos_pct = f"{(positive/total_sentiment*100):.1f}%" if total_sentiment > 0 else "0%"
@@ -858,48 +998,10 @@ def main():
     
     st.markdown("---")
     
-    # Sidebar
+    # Sidebar - Minimal controls only
     with st.sidebar:
-        st.header("🎯 Advanced Features")
-        
-        st.markdown("""
-        <div class='objective-box'>
-        <b>🤖 K-Means Clustering</b><br>
-        Fixed cluster count for consistent grouping
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("""
-        <div class='objective-box'>
-        <b>🧠 Sentence Transformers</b><br>
-        Semantic similarity embeddings
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("""
-        <div class='objective-box'>
-        <b>📝 BART Summarization</b><br>
-        AI-generated event summaries
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("""
-        <div class='objective-box'>
-        <b>🗺️ Geospatial Analysis</b><br>
-        Location extraction & mapping
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("""
-        <div class='objective-box'>
-        <b>⏱️ Lifecycle Tracking</b><br>
-        Birth • Growth • Maturity • Decline
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("---")
         st.header("⚙️ Controls")
-        auto_refresh = st.checkbox("Auto-refresh (10s)", value=False)
+        # Auto-refresh removed
         sentiment_filter = st.multiselect(
             "Sentiment Filter",
             ["positive", "negative", "neutral"],
@@ -972,12 +1074,11 @@ def main():
     
     st.markdown("---")
     
-    # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    # Tabs (4 tabs total after removing Lifecycle Analysis)
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🤖 K-Means Clustering",
-        "📝 AI Summaries",
+        "📝 Text Analysis",
         "🗺️ Geospatial Map",
-        "⏱️ Lifecycle Analysis",
         "🌐 Entity Network",
         "📱 Live Feed"
     ])
@@ -1097,10 +1198,10 @@ def main():
                     )
                     st.plotly_chart(fig_clusters, use_container_width=True)
                     
-                    # Show sample posts from each cluster with AI summaries
+                    # Show sample posts from each cluster with automated summaries
                     st.markdown("### 📋 Intelligent Cluster Analysis")
                     
-                    for cluster_id in cluster_sizes.head(5)['cluster']:
+                    for cluster_id in cluster_sizes.head(20)['cluster']: # Show all top clusters (up to 20)
                         cluster_df = df_clustered[df_clustered['cluster'] == cluster_id]
                         cluster_posts = cluster_df['text'].tolist()
                         
@@ -1108,74 +1209,70 @@ def main():
                         topic_label = cluster_topics.get(int(cluster_id), f"Cluster {cluster_id}")
                         
                         with st.expander(f"🎯 **{topic_label}** (Cluster {cluster_id}) - {len(cluster_posts)} articles", expanded=False):
-                            # Generate AI summary for this cluster
-                            if summarizer is not None and len(cluster_posts) >= 2:
-                                col_summary, col_samples = st.columns([2, 1])
+                            col_articles, col_stats = st.columns([2, 1])
+                            
+                            with col_articles:
+                                st.markdown("#### 📄 Top Articles")
+                                # Show top 3 distinct articles sorted by Entity Relevance
+                                seen_titles = set()
+                                count = 0
                                 
-                                with col_summary:
-                                    st.markdown("#### 🤖 AI Cluster Summary")
-                                    with st.spinner(f"Analyzing cluster {cluster_id}..."):
-                                        cluster_summary = generate_cluster_summary(cluster_posts[:10], summarizer)
-                                    
-                                    st.markdown(f"""
-                                    <div class='summary-box'>
-                                    {cluster_summary}
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                    
-                                    # Extract key entities from this cluster
-                                    cluster_entities = []
-                                    for entities in cluster_df['entities'].dropna():
-                                        if isinstance(entities, list):
-                                            cluster_entities.extend(entities)
-                                    
-                                    if cluster_entities:
-                                        top_cluster_entities = Counter(cluster_entities).most_common(5)
-                                        st.markdown("**🏷️ Key Entities:**")
-                                        entity_badges = " ".join([f"`{ent}` ({count})" for ent, count in top_cluster_entities])
-                                        st.markdown(entity_badges)
+                                # --- RE-RANKING LOGIC ---
+                                # 1. Get top entities for the ENTIRE cluster
+                                all_cluster_ents = []
+                                for ents_list in cluster_df['entities'].dropna():
+                                    if isinstance(ents_list, list):
+                                        all_cluster_ents.extend(ents_list)
+                                top_cluster_ents = [e for e, c in Counter(all_cluster_ents).most_common(10)]
                                 
-                                with col_samples:
-                                    st.markdown("#### 📊 Cluster Stats")
+                                # 2. Score each article based on overlap with top entities
+                                def calculate_relevance(row):
+                                    score = 0
+                                    # Entity overlap score (high weight)
+                                    row_ents = row.get('entities', [])
+                                    if isinstance(row_ents, list):
+                                        overlap = sum(1 for e in row_ents if e in top_cluster_ents)
+                                        score += overlap * 10
                                     
-                                    # Sentiment distribution in cluster
-                                    cluster_sentiments = cluster_df['sentiment'].value_counts()
-                                    if not cluster_sentiments.empty:
-                                        st.markdown("**Sentiment:**")
-                                        for sent, count in cluster_sentiments.items():
-                                            emoji = "😊" if sent == "positive" else "😠" if sent == "negative" else "😐"
-                                            st.write(f"{emoji} {sent.title()}: {count}")
-                                    
-                                    # Location distribution
-                                    cluster_locs = []
-                                    for locs in cluster_df['locations'].dropna():
-                                        if isinstance(locs, list):
-                                            cluster_locs.extend(locs)
-                                    if cluster_locs:
-                                        top_locs = Counter(cluster_locs).most_common(3)
-                                        st.markdown("**🌍 Top Locations:**")
-                                        for loc, count in top_locs:
-                                            st.write(f"📍 {loc}: {count}")
+                                    # Confidence score (tie-breaker)
+                                    score += row.get('confidence', 0)
+                                    return score
                                 
-                                st.markdown("---")
-                                st.markdown("**📄 Sample Articles:**")
-                                for i, (idx, row) in enumerate(cluster_df.head(3).iterrows()):
+                                # 3. Sort by new relevance score
+                                display_df = cluster_df.copy()
+                                display_df['relevance_score'] = display_df.apply(calculate_relevance, axis=1)
+                                cluster_df_sorted = display_df.sort_values('relevance_score', ascending=False)
+                                # ------------------------
+                                
+                                for i, (idx, row) in enumerate(cluster_df_sorted.iterrows()):
                                     title = row.get('title', 'No title')
-                                    content_preview = row.get('text', row.get('content', ''))[:150]
-                                    st.write(f"**{i+1}. {title}**")
-                                    st.write(f"   {content_preview}...")
-                            else:
-                                # Fallback if no summarizer
-                                st.markdown("**📄 Sample Articles:**")
-                                for i, (idx, row) in enumerate(cluster_df.head(3).iterrows()):
-                                    title = row.get('title', 'No title')
-                                    content_preview = row.get('text', row.get('content', ''))[:150]
-                                    st.write(f"**{i+1}. {title}**")
-                                    st.write(f"   {content_preview}...")
-                else:
-                    st.warning("K-Means clustering failed or insufficient data")
-            else:
-                st.warning("Embedding generation failed")
+                                    if title in seen_titles: continue
+                                    seen_titles.add(title)
+                                    
+                                    raw_content = row.get('text', row.get('content', ''))
+                                    clean_content = clean_text_for_display(raw_content)
+                                    
+                                    st.markdown(f"**{count+1}. {title}**")
+                                    st.caption(f"{clean_content[:200]}...")
+                                    st.markdown("---")
+                                    
+                                    count += 1
+                                    if count >= 3: break
+                            
+                            with col_stats:
+                                st.markdown("#### 📊 Insights")
+                                
+                                # Extract key entities (reused logic)
+                                cluster_entities = []
+                                for entities in cluster_df['entities'].dropna():
+                                    if isinstance(entities, list):
+                                        cluster_entities.extend(entities)
+                                
+                                if cluster_entities:
+                                    top_entities = Counter(cluster_entities).most_common(5)
+                                    st.markdown("**🏷️ Key Entities:**")
+                                    for ent, count in top_entities:
+                                        st.write(f"- {ent}")
         else:
             if df.empty:
                 st.warning("❌ No data available. Check your data source and filters.")
@@ -1186,9 +1283,9 @@ def main():
             else:
                 st.warning("❌ Insufficient data or models not loaded")
     
-    # TAB 2: AI Summarization (Enhanced)
+    # TAB 2: Text Summarization (Enhanced)
     with tab2:
-        st.subheader("🧠 AI-Powered Narrative Intelligence")
+        st.subheader("🧠 Automated Narrative Intelligence")
         
         if not df.empty and 'content' in df.columns and summarizer is not None:
             # Section 1: Top Stories by Entity
@@ -1212,15 +1309,25 @@ def main():
                         )]
                         
                         if len(entity_articles) >= 2:
-                            texts = entity_articles['content'].dropna().astype(str).tolist()[:10]
-                            with st.spinner(f"Analyzing {entity}..."):
-                                topic_summary = generate_cluster_summary(texts, summarizer)
+                            # Get top 3 headlines for this entity
+                            top_headlines = []
+                            seen = set()
+                            for _, row in entity_articles.iterrows():
+                                title = row.get('title', '')
+                                if title and title not in seen:
+                                    title_clean = clean_text_for_display(title)
+                                    top_headlines.append(title_clean)
+                                    seen.add(title)
+                                if len(top_headlines) >= 3:
+                                    break
+                            
+                            headlines_list = "".join([f"<div style='margin-bottom:6px; font-size:0.85em; line-height:1.3;'>• {h[:100]}</div>" for h in top_headlines])
                             
                             st.markdown(f"""
                             <div class='objective-box'>
                             <h4>📌 {entity}</h4>
-                            <div style='font-size: 0.9em;'><strong>{count} mentions</strong></div>
-                            <div style='font-size: 0.85em; margin-top: 10px;'>{topic_summary}</div>
+                            <div style='font-size: 0.9em; margin-bottom:10px;'><strong>{count} mentions</strong></div>
+                            {headlines_list}
                             </div>
                             """, unsafe_allow_html=True)
             
@@ -1265,8 +1372,8 @@ def main():
             
             st.markdown("---")
             
-            # Section 3: Critical Alerts (Negative sentiment)
-            st.markdown("### ⚠️ Critical Intelligence Alerts")
+            # Section 3: Breaking Stories (Negative sentiment)
+            st.markdown("### 📰 Breaking Stories")
             
             negative_articles = df[df['sentiment'] == 'negative']
             if len(negative_articles) >= 2:
@@ -1274,51 +1381,67 @@ def main():
                 if 'timestamp' in negative_articles.columns:
                     negative_articles = negative_articles.sort_values('timestamp', ascending=False)
                 
-                critical_texts = negative_articles['content'].dropna().astype(str).tolist()[:10]
-                with st.spinner("Analyzing critical narratives..."):
-                    critical_summary = generate_cluster_summary(critical_texts, summarizer)
+                # Show top 5 critical headlines directly
+                headlines_md = ""
+                seen = set()
+                count = 0
+                import re
                 
-                st.error(f"""
-                **🚨 Alert Summary ({len(negative_articles)} negative articles)**  
-                {critical_summary}
-                """)
+                for idx, row in negative_articles.iterrows():
+                    title = row.get('title', 'No title')
+                    # Normalize title for better deduplication (remove smart quotes, case, punctuation)
+                    norm_title = re.sub(r'[^\w\s]', '', title.lower().replace('‘', '').replace('’', '').replace('“', '').replace('”', '').replace("'", ""))
+                    
+                    location = row.get('locations', ['Unknown'])[0] if isinstance(row.get('locations'), list) and row.get('locations') else 'Unknown'
+                    if location == 'Unknown': location = 'India' # Default for Indian sources
+                    # Clean location formatting (e.g. 'the Middle East' -> 'The Middle East')
+                    if location and len(location) > 0:
+                        location = location[0].upper() + location[1:]
+                    
+                    if norm_title not in seen:
+                        # Clean title
+                        title = clean_text_for_display(title)
+                        headlines_md += f"- **{location}:** {title}\n"
+                        seen.add(norm_title)
+                        count += 1
+                        if count >= 5: break
                 
-                # Show top 3 critical headlines
-                if 'title' in negative_articles.columns:
-                    st.markdown("**Top Critical Headlines:**")
-                    for idx, row in negative_articles.head(3).iterrows():
-                        title = row.get('title', 'No title')
-                        location = row.get('locations', ['Unknown'])[0] if isinstance(row.get('locations'), list) and row.get('locations') else 'Unknown'
-                        st.markdown(f"- 📍 **{location}**: {title}")
+                alert_msg = f"**📰 Highlighted Stories ({len(negative_articles)} articles)**\n\n{headlines_md}"
+                st.error(alert_msg)
             else:
                 st.success("✅ No critical alerts detected")
             
             st.markdown("---")
             
-            # Section 4: Positive Developments
-            st.markdown("### 📈 Positive Developments")
+            # Section 4: Trending Stories
+            st.markdown("### 📈 Trending Stories")
             
             positive_articles = df[df['sentiment'] == 'positive']
             if len(positive_articles) >= 2:
-                positive_texts = positive_articles['content'].dropna().astype(str).tolist()[:10]
-                with st.spinner("Analyzing positive trends..."):
-                    positive_summary = generate_cluster_summary(positive_texts, summarizer)
+                # Show top 5 positive headlines
+                headlines_md = ""
+                seen = set()
+                count = 0
+                for idx, row in positive_articles.iterrows():
+                    title = row.get('title', 'No title')
+                    # Normalize title for deduplication
+                    norm_title = re.sub(r'[^\w\s]', '', title.lower().replace('‘', '').replace('’', '').replace('“', '').replace('”', '').replace("'", ""))
+                    
+                    location = row.get('locations', ['Unknown'])[0] if isinstance(row.get('locations'), list) and row.get('locations') else 'Unknown'
+                    if location == 'Unknown': location = 'India' # Default for Indian sources
+                    # Clean location formatting
+                    if location and len(location) > 0:
+                        location = location[0].upper() + location[1:]
+                        
+                    if norm_title not in seen:
+                        title = clean_text_for_display(title)
+                        headlines_md += f"- **{location}:** {title}\n"
+                        seen.add(norm_title)
+                        count += 1
+                        if count >= 5: break
                 
-                st.success(f"""
-                **😊 Positive Trends ({len(positive_articles)} articles)**  
-                {positive_summary}
-                """)
-                # Add 2-3 more concrete points (top positive headlines)
-                try:
-                    if 'timestamp' in positive_articles.columns:
-                        positive_articles = positive_articles.sort_values('timestamp', ascending=False)
-                    st.markdown("**Key Positive Highlights:**")
-                    for idx, row in positive_articles.head(4).iterrows():
-                        title = row.get('title', 'No title')
-                        location = row.get('locations', ['Unknown'])[0] if isinstance(row.get('locations'), list) and row.get('locations') else 'Unknown'
-                        st.markdown(f"- 📍 **{location}**: {title[:140]}")
-                except Exception:
-                    pass
+                positive_msg = f"**📈 Popular Stories ({len(positive_articles)} articles)**\n\n{headlines_md}"
+                st.success(positive_msg)
             else:
                 st.info("No significant positive trends")
             
@@ -1403,28 +1526,7 @@ def main():
                     )
                     st.plotly_chart(fig_hype, use_container_width=True)
                     
-                    # Show top clickbait articles
-                    top_hype = hype_df.nlargest(5, 'hype_score')
-                    if len(top_hype) > 0:
-                        st.markdown("**🚨 Potential Clickbait Articles:**")
-                        for idx, row in top_hype.iterrows():
-                            if row['hype_score'] > 5:
-                                with st.expander(f"⚠️ **Hype Score: {row['hype_score']:.1f}** - {row['title'][:80]}...", expanded=False):
-                                    st.markdown(f"**Full Title:** {row.get('full_title', row['title'])}")
-                                    st.markdown(f"**Sensationalism Score:** {row['sensationalism']:.2f}/5.0")
-                                    st.markdown(f"**Factual Density:** {row['factual_density']:.2f} entities per 100 words")
-                                    if row.get('summary'):
-                                        st.markdown(f"**Summary:** {row['summary']}")
-                                    if row.get('analysis'):
-                                        st.markdown(f"**Analysis:** {row['analysis']}")
-                                    else:
-                                        st.markdown(f"**Analysis:** This article uses highly sensational language with minimal factual content, indicating potential clickbait.")
-                                    if 'content' in row and row['content']:
-                                        st.markdown(f"**Content Preview:** {row['content'][:200]}...")
-                                    if 'source' in row:
-                                        st.markdown(f"**Source:** {row['source']}")
-                                    if 'author' in row:
-                                        st.markdown(f"**Author:** {row['author']}")
+                    # (Potential Clickbait Articles list removed as requested)
                 
         else:
             st.info("Summarizer not loaded or insufficient data")
@@ -1522,81 +1624,11 @@ def main():
         else:
             st.info("Insufficient data for geospatial analysis")
     
-    # TAB 4: Temporal Lifecycle
-    with tab4:
-        st.subheader("⏱️ Event Lifecycle Analysis")
-        
-        if not df.empty:
-            lifecycle_data = analyze_temporal_lifecycle(df)
-            
-            if lifecycle_data is not None and not lifecycle_data.empty:
-                # Post count over time
-                fig_posts = px.area(
-                    lifecycle_data,
-                    x='timestamp',
-                    y='post_count',
-                    title='Post Volume Over Time',
-                    labels={'timestamp': 'Time', 'post_count': 'Posts/Hour'}
-                )
-                fig_posts.update_traces(fillcolor='rgba(102, 126, 234, 0.3)', line_color='#667eea')
-                fig_posts.update_layout(
-                    template='plotly_white',
-                    paper_bgcolor='rgba(255,255,255,0)',
-                    font=dict(color='#1e293b')
-                )
-                st.plotly_chart(fig_posts, use_container_width=True)
-                
-                # Velocity and acceleration
-                fig_velocity = go.Figure()
-                fig_velocity.add_trace(go.Scatter(
-                    x=lifecycle_data['timestamp'],
-                    y=lifecycle_data['velocity'],
-                    mode='lines',
-                    name='Velocity (Growth Rate)',
-                    line=dict(color='#10b981', width=2)
-                ))
-                fig_velocity.add_trace(go.Scatter(
-                    x=lifecycle_data['timestamp'],
-                    y=lifecycle_data['acceleration'],
-                    mode='lines',
-                    name='Acceleration (Momentum)',
-                    line=dict(color='#ef4444', width=2)
-                ))
-                fig_velocity.update_layout(
-                    title='Event Velocity & Acceleration',
-                    template='plotly_white',
-                    paper_bgcolor='rgba(255,255,255,0)',
-                    font=dict(color='#1e293b'),
-                    yaxis_title='Rate of Change'
-                )
-                st.plotly_chart(fig_velocity, use_container_width=True)
-                
-                # Lifecycle stage distribution
-                stage_counts = lifecycle_data['lifecycle_stage'].value_counts()
-                fig_stages = px.pie(
-                    values=stage_counts.values,
-                    names=stage_counts.index,
-                    title='Lifecycle Stage Distribution',
-                    color_discrete_sequence=['#10b981', '#3b82f6', '#ef4444', '#6b7280']
-                )
-                fig_stages.update_layout(
-                    template='plotly_white',
-                    paper_bgcolor='rgba(255,255,255,0)',
-                    font=dict(color='#1e293b')
-                )
-                st.plotly_chart(fig_stages, use_container_width=True)
-                
-                # Detailed lifecycle table
-                st.markdown("### 📊 Lifecycle Metrics")
-                display_cols = ['timestamp', 'post_count', 'velocity', 'acceleration', 'lifecycle_stage']
-                st.dataframe(lifecycle_data[display_cols].tail(24), use_container_width=True)
-            else:
-                st.info("Collecting temporal data...")
-        else:
-            st.info("No data available")
+    # TAB 4 (REMOVED): Temporal Lifecycle Analysis
+    # This tab was removed due to data compatibility issues with batch-loaded articles
     
-    # TAB 5: Dynamic Entity Relationship Network
-    with tab5:
+    # TAB 4: Dynamic Entity Relationship Network
+    with tab4:
         st.subheader("🕸️ Dynamic Entity Relationship Graph")
         st.markdown("*Real-time sentiment between entities - Who is connected to whom?*")
         
@@ -1632,8 +1664,7 @@ def main():
                     # Add edges
                     for idx, row in rel_df.iterrows():
                         G.add_edge(row['source'], row['target'], 
-                                  weight=row['weight'], 
-                                  sentiment=row['sentiment'])
+                                  weight=row['weight'])
                     
                     # Get positions using spring layout
                     pos = nx.spring_layout(G, k=0.5, iterations=50)
@@ -1644,14 +1675,8 @@ def main():
                         x0, y0 = pos[edge[0]]
                         x1, y1 = pos[edge[1]]
                         
-                        sentiment = edge[2]['sentiment']
-                        # Color based on sentiment
-                        if sentiment > 0.2:
-                            color = 'rgba(0, 255, 0, 0.5)'
-                        elif sentiment < -0.2:
-                            color = 'rgba(255, 0, 0, 0.5)'
-                        else:
-                            color = 'rgba(128, 128, 128, 0.3)'
+                        # Use consistent color for all edges
+                        color = 'rgba(102, 126, 234, 0.5)'  # #667eea with transparency
                         
                         edge_trace = go.Scatter(
                             x=[x0, x1, None],
@@ -1695,7 +1720,7 @@ def main():
                     # Create figure
                     fig_network = go.Figure(data=edge_traces + [node_trace])
                     fig_network.update_layout(
-                        title='🕸️ Entity Relationship Network (Edge color: Green=Positive, Red=Negative, Gray=Neutral)',
+                        title='🕸️ Entity Co-occurrence Network',
                         showlegend=False,
                         hovermode='closest',
                         template='plotly_white',
@@ -1712,12 +1737,8 @@ def main():
                     # Show relationship table
                     st.markdown("### 📋 Relationship Details")
                     
-                    display_df = rel_df[['source', 'target', 'weight', 'sentiment']].copy()
-                    display_df['sentiment_label'] = display_df['sentiment'].apply(
-                        lambda x: '😊 Positive' if x > 0.2 else '😠 Negative' if x < -0.2 else '😐 Neutral'
-                    )
-                    display_df['sentiment'] = display_df['sentiment'].round(2)
-                    display_df.columns = ['Entity 1', 'Entity 2', 'Co-occurrences', 'Avg Sentiment', 'Relationship']
+                    display_df = rel_df[['source', 'target', 'weight']].copy()
+                    display_df.columns = ['Entity 1', 'Entity 2', 'Co-occurrences']
                     
                     st.dataframe(display_df, use_container_width=True, hide_index=True)
                     
@@ -1726,8 +1747,8 @@ def main():
         else:
             st.info("No entity data available or NLP model not loaded")
     
-    # TAB 6: Live Feed (from original)
-    with tab6:
+    # TAB 5: Live Feed (was tab6)
+    with tab5:
         st.subheader("📱 Real-Time Stream")
         
         if not df.empty:
@@ -1739,7 +1760,7 @@ def main():
                 
                 # Safe content extraction
                 content = row.get('content') or row.get('text') or row.get('title') or 'No content'
-                content_preview = str(content)[:80] if content else 'No content'
+                content_preview = clean_text_for_display(content)[:80] if content else 'No content'
                 
                 with st.expander(f"{sentiment_emoji} {event_badge} {content_preview}..."):
                     st.write(f"**Content:** {content}")
@@ -1751,79 +1772,14 @@ def main():
         else:
             st.warning("No live data available")
     
-    # Critical Alerts Sidebar
-    with st.sidebar:
-        st.markdown("---")
-        st.markdown("## 🚨 Critical Alerts")
-        
-        # Alert for high negative sentiment surge
-        if not df.empty and 'sentiment' in df.columns:
-            negative_count = len(df[df['sentiment'] == 'negative'])
-            total = len(df)
-            negative_ratio = negative_count / total if total > 0 else 0
-            
-            if negative_ratio > 0.5:
-                st.error(f"⚠️ **High Negativity**: {negative_ratio*100:.0f}% negative articles")
-            
-            # Alert for narrative drift
-            if 'prev_embeddings' in st.session_state:
-                drift_score = getattr(st.session_state, 'last_drift_score', 0)
-                if drift_score > 0.3:
-                    st.warning(f"🧬 **Narrative Shift**: Drift score {drift_score:.2f}")
-            
-            # Alert for high hype articles
-            critical_entities = ['war', 'crisis', 'disaster', 'attack', 'threat']
-            critical_count = 0
-            if 'entities' in df.columns:
-                for entities in df['entities'].dropna():
-                    if isinstance(entities, list):
-                        if any(e.lower() in critical_entities for e in entities):
-                            critical_count += 1
-            
-            if critical_count > 5:
-                st.error(f"🔴 **Critical Events**: {critical_count} crisis-related articles")
-        
-        st.markdown("---")
-        st.markdown("## 📤 Export Data")
-        
-        # Export button
-        if st.button("💾 Export Analysis Report"):
-            export_data = {
-                'timestamp': datetime.now().isoformat(),
-                'total_documents': len(df),
-                'sentiment_distribution': df['sentiment'].value_counts().to_dict() if 'sentiment' in df.columns else {},
-                'top_entities': dict(Counter([e for entities in df['entities'].dropna() 
-                                             for e in (entities if isinstance(entities, list) else [])]).most_common(10)),
-                'system_status': {
-                    'ml_models_active': models_loaded,
-                    'data_quality': 'Good' if len(df) > 100 else 'Limited'
-                }
-            }
-            
-            st.download_button(
-                label="📥 Download JSON Report",
-                data=json.dumps(export_data, indent=2),
-                file_name=f"narrative_intel_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json"
-            )
-            st.success("✅ Report ready for download!")
+
     
-    # Footer with system status
-    st.markdown("---")
-    status_cols = st.columns([1, 1, 1, 1])
-    with status_cols[0]:
-        st.markdown(f"**System:** 🟢 Live Streaming")
-    with status_cols[1]:
-        st.markdown(f"**ML Models:** {'✅ Active' if models_loaded else '⚠️ Partial'}")
-    with status_cols[2]:
-        st.markdown(f"**Last Update:** {datetime.now().strftime('%H:%M:%S')}")
-    with status_cols[3]:
-        st.markdown(f"**Next Refresh:** {refresh_interval}s")
+    # (Footer removed as requested)
     
-    # Auto-refresh logic
-    if auto_refresh:
-        time.sleep(refresh_interval)
-        st.rerun()
+    # Auto-refresh logic (Disabled)
+    # if auto_refresh:
+    #     time.sleep(refresh_interval)
+    #     st.rerun()
 
 if __name__ == "__main__":
     main()

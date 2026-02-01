@@ -66,7 +66,7 @@ class VisualizationGenerator:
             logger.error(f"❌ Failed to load velocity data: {e}")
             return None
     
-    def generate_latency_throughput_chart(self, latency_data, output_file='latency_throughput.png'):
+    def generate_latency_throughput_chart(self, latency_data, output_file='latency_throughput.pdf'):
         """
         Generate Dual-Axis Line Chart: Throughput vs. Latency
         
@@ -113,8 +113,8 @@ class VisualizationGenerator:
         # Formatting
         ax.set_xlabel('Throughput (articles/minute)', fontsize=14, fontweight='bold')
         ax.set_ylabel('End-to-End Latency (ms)', fontsize=14, fontweight='bold')
-        ax.set_title('Latency vs. Throughput Performance Analysis\n$L = T_{ES} - T_{Kafka}$', 
-                    fontsize=16, fontweight='bold', pad=20)
+        # ax.set_title('Latency vs. Throughput Performance Analysis\n$L = T_{ES} - T_{Kafka}$', 
+        #             fontsize=16, fontweight='bold', pad=20)
         
         # Log scale for x-axis if large range
         if max(throughput_levels) / min(throughput_levels) > 10:
@@ -146,7 +146,7 @@ class VisualizationGenerator:
         
         return str(output_path)
     
-    def generate_peak_velocity_chart(self, velocity_data, cluster_key=None, output_file='peak_velocity_detection.png'):
+    def generate_peak_velocity_chart(self, velocity_data, cluster_key=None, output_file='peak_velocity_detection.pdf'):
         """
         Generate Temporal Area Chart: Peak Velocity Detection
         
@@ -229,8 +229,8 @@ class VisualizationGenerator:
         
         ax1.set_xlabel('Time (minutes from start)', fontsize=13, fontweight='bold')
         ax1.set_ylabel('Cumulative Documents', fontsize=13, fontweight='bold')
-        ax1.set_title(f'Peak Velocity Detection: {cluster_key}\n$V_p = \\max(\\Delta N / \\Delta t)$',
-                     fontsize=15, fontweight='bold', pad=15)
+        # ax1.set_title(f'Peak Velocity Detection: {cluster_key}\n$V_p = \\max(\\Delta N / \\Delta t)$',
+        #              fontsize=15, fontweight='bold', pad=15)
         ax1.grid(True, alpha=0.3, linestyle='--')
         ax1.legend(loc='upper left', frameon=True, shadow=True, fontsize=10)
         
@@ -245,7 +245,7 @@ class VisualizationGenerator:
         
         ax2.set_xlabel('Time (minutes from start)', fontsize=13, fontweight='bold')
         ax2.set_ylabel('Velocity (docs/min)', fontsize=13, fontweight='bold')
-        ax2.set_title('Instantaneous Ingestion Velocity', fontsize=14, fontweight='bold', pad=10)
+        # ax2.set_title('Instantaneous Ingestion Velocity', fontsize=14, fontweight='bold', pad=10)
         ax2.grid(True, alpha=0.3, linestyle='--')
         
         plt.tight_layout()
